@@ -1,0 +1,80 @@
+//Constraints - Create
+create constraint c_pname    if not exists for (p:Person) require (p.Name) is UNIQUE;
+create constraint c_oid      if not exists for (p:Order)  require (p.Id)   is UNIQUE;
+create constraint c_itemid   if not exists for (p:Item)   require (p.Id)   is UNIQUE;
+//create constraint c_itemname if not exists for (p:Item)   require (p.Name) is UNIQUE;
+//drop constraint c_itemname;
+
+//Constraints - Show Active
+show constraints
+
+//Data - Delete Nodes & Relationships
+// clear all nodes & relationships
+MATCH (n)
+DETACH DELETE n
+
+//Data - Load
+:auto load csv with headers from "file:///D:/Neo4j/AppData/relate-data/dbmss/dbms-c8bff019-7398-42ac-999b-968f2b679167/import/superstore.csv" as line
+
+with line
+merge (p:Person {Name: (line.Customer_Name)})
+merge (o:Order {ID : line.Order_ID, order_date : line.Order_Date})
+merge (p)-[:ORDERED]->(o)
+
+merge (i:Item {ID:  line.Product_ID})
+on create set i.Name = line.Product_Name
+
+merge (o)-[:BOUGHT]->(i)
+
+
+//Everything a Person Ordered
+match (a:Person)-[:ORDERED]-(o:Order)-[:BOUGHT]-(i:Item)
+with a,o,i limit 100
+return a,o,i
+
+//Find all items & mutual items between two people
+match (a:Person {Name: "Toby Braunhardt"})-[:ORDERED]-(o:Order)-[:BOUGHT]-(c:Item)
+return a,o,c
+UNION
+match (a:Person {Name: "Eugene Moren"})-[:ORDERED]-(o:Order)-[:BOUGHT]-(c:Item)
+return a,o,c
+
+
+//Find only mutual items between two people
+match (a:Person {Name: "Toby Braunhardt"})-[:ORDERED]-(b:Order)-[:BOUGHT]->(c:Item)
+<-[:BOUGHT]-(d:Order)-[:ORDERED]-(e:Person {Name: "Eugene Moren"})
+
+return a,b,c,d,e
+
+
+//Find people who overlapped with Toby
+
+match (a:Person {Name: "Toby Braunhardt"})-[:ORDERED]-(b:Order)-[:BOUGHT]->(c:Item)<-[:BOUGHT]-(d:Order)-[:ORDERED]-(e:Person)
+return a,b,c,d,e
+
+// Items ordered the most
+
+match (o)-[:BOUGHT]-(i)
+with i, count(o) as cnt_orders
+order by cnt_orders desc
+return i.Name, cnt_orders
+
+// Propogate graph to GDS catalog
+CALL gds.graph.project.cypher(
+    'ss_graph',
+    'match(n) where n:Person or n:Item return id(n) as id, labels(n) as labels',
+    'match (n)-[r:BOUGHT]-(m) return id(n) as source, id(m) as target'
+) YIELD
+     graphName AS graph, nodeQuery, nodeCount AS nodes, relationshipCount AS rels
+
+
+ CALL gds.graph.project.cypher(
+     'ss_graph',
+     'match(n) where n:Person or n:Item return id(n) as id, labels(n) as labels',
+     'match (n)-[r:BOUGHT]-(m) return id(n) as source, id(m) as target'
+ ) YIELD
+      graphName AS graph, nodeQuery, nodeCount AS nodes, relationshipCount AS rels
+
+CALL gds.louvain.stream('myGraph') YIELD nodeId, communityId, intermediateCommunityIds
+
+CALL gds.louvain.write('myGraph', { writeProperty: 'community' })
